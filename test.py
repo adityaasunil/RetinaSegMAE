@@ -6,10 +6,10 @@ from model import MAE_ViT
 from transforms import get_transforms
 
 DEVICE = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
-IMAGE_SIZE = 512
-PATCH_SIZE = 32
+IMAGE_SIZE = 384
+PATCH_SIZE = 16
 NUM_SHOW = 8
-MODEL_WEIGHTS = "vit-t-mae.pt"   
+MODEL_WEIGHTS = "bestmodel.pt"   
 SPLIT = "test"                     
 
 

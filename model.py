@@ -25,7 +25,7 @@ class PatchShuffle(torch.nn.Module):
         T, B, C = patches.shape
         remain_T = int(T * (1 - self.ratio))
 
-        forward_indexes, backward_indexes = [random_indexes(T,B,torch.device('mps'))]
+        forward_indexes, backward_indexes = random_indexes(T,B,torch.device('mps'))
 
         patches = take_indexes(patches, forward_indexes)
         patches = patches[:remain_T]

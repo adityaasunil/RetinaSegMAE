@@ -41,8 +41,9 @@ if __name__ == '__main__':
     writer = SummaryWriter(os.path.join('logs', 'Retina Dataset', 'mae-pretrain'))
     device = torch.device('mps')
 
-    model = MAE_ViT(mask_ratio=args.mask_ratio).to(device)
-    optim = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.05)
+    model = torch.load('bestmodel.pt',map_location=device)
+    model.to(device)
+    optim = torch.optim.AdamW(model.parameters(), lr=1e-5, weight_decay=0.05)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.total_epoch)
 
     step_count = 0
