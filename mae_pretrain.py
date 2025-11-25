@@ -19,11 +19,12 @@ if __name__ == '__main__':
     parser.add_argument('--base_learning_rate', type=float, default=1.5e-4)
     parser.add_argument('--weight_decay', type=float, default=0.05)
     parser.add_argument('--mask_ratio', type=float, default=0.6)
-    parser.add_argument('--total_epoch', type=int, default=1000)
+    parser.add_argument('--total_epoch', type=int, default=500)
     parser.add_argument('--warmup_epoch', type=int, default=200)
-    parser.add_argument('--model_path', type=str, default='vit-t-mae.pt')
+    parser.add_argument('--model_path', type=str, default='bestmodel.pt')
 
     args = parser.parse_args()
+    accumulation_steps = 2 or 4
 
     setup_seed(args.seed)
 
@@ -41,9 +42,8 @@ if __name__ == '__main__':
     device = torch.device('mps')
 
     model = MAE_ViT(mask_ratio=args.mask_ratio).to(device)
-    optim = torch.optim.AdamW(model.parameters(), lr=args.base_learning_rate * args.batch_size / 256, betas=(0.9, 0.95), weight_decay=args.weight_decay)
-    lr_func = lambda epoch: min((epoch + 1) / (args.warmup_epoch + 1e-8), 0.5 * (math.cos(epoch / args.total_epoch * math.pi) + 1))
-    lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=lr_func)
+    optim = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.05)
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.total_epoch)
 
     step_count = 0
     optim.zero_grad()
@@ -54,12 +54,14 @@ if __name__ == '__main__':
             step_count += 1
             img = img.to(device)
             predicted_img, mask = model(img)
-            loss = torch.mean((predicted_img - img) ** 2 * mask) / args.mask_ratio
-            loss.backward()
-            if step_count % steps_per_update == 0:
-                optim.step()
-                optim.zero_grad()
-            losses.append(loss.item())
+            with torch.autocast(device_type='mps', dtype=torch.float16):
+                loss = torch.mean((predicted_img - img) ** 2 * mask) / args.mask_ratio
+                loss = loss / accumulation_steps
+                loss.backward()
+                if (e+1) % accumulation_steps == 0:
+                    optim.step()
+                    optim.zero_grad()
+                losses.append(loss.item())
         lr_scheduler.step()
         avg_loss = sum(losses) / len(losses)
         writer.add_scalar('mae_loss', avg_loss, global_step=e)

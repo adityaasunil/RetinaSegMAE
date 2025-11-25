@@ -8,11 +8,10 @@ from einops.layers.torch import Rearrange
 from timm.models.layers import trunc_normal_
 from timm.models.vision_transformer import Block
 
-def random_indexes(size : int):
-    forward_indexes = np.arange(size)
-    np.random.shuffle(forward_indexes)
-    backward_indexes = np.argsort(forward_indexes)
-    return forward_indexes, backward_indexes
+def random_indexes(T,B,device):
+    forward = torch.stack([torch.randperm(T,device=device) for _ in range(B)], dim=1)
+    backward = torch.argsort(forward, dim=0)
+    return forward, backward
 
 def take_indexes(sequences, indexes):
     return torch.gather(sequences, 0, repeat(indexes, 't b -> t b c', c=sequences.shape[-1]))
@@ -26,7 +25,7 @@ class PatchShuffle(torch.nn.Module):
         T, B, C = patches.shape
         remain_T = int(T * (1 - self.ratio))
 
-        indexes = [random_indexes(T) for _ in range(B)]
+        indexes = [random_indexes(T,B,torch.device('mps')) for _ in range(B)]
         forward_indexes = torch.as_tensor(np.stack([i[0] for i in indexes], axis=-1), dtype=torch.long).to(patches.device)
         backward_indexes = torch.as_tensor(np.stack([i[1] for i in indexes], axis=-1), dtype=torch.long).to(patches.device)
 
@@ -37,11 +36,11 @@ class PatchShuffle(torch.nn.Module):
 
 class MAE_Encoder(torch.nn.Module):
     def __init__(self,
-                 image_size=512,
+                 image_size=384,
                  patch_size=16,
-                 emb_dim=384,
-                 num_layer=12,
-                 num_head=3,
+                 emb_dim=256,
+                 num_layer=8,
+                 num_head=8,
                  mask_ratio=0.6,
                  ) -> None:
         super().__init__()
@@ -78,11 +77,11 @@ class MAE_Encoder(torch.nn.Module):
 
 class MAE_Decoder(torch.nn.Module):
     def __init__(self,
-                 image_size=512,
-                 patch_size=32,
-                 emb_dim=384,
-                 num_layer=8,
-                 num_head=3,
+                 image_size=384,
+                 patch_size=16,
+                 emb_dim=256,
+                 num_layer=4,
+                 num_head=8,
                  ) -> None:
         super().__init__()
 
@@ -123,13 +122,13 @@ class MAE_Decoder(torch.nn.Module):
 
 class MAE_ViT(torch.nn.Module):
     def __init__(self,
-                 image_size=512,
+                 image_size=384,
                  patch_size=16,
-                 emb_dim=384,
-                 encoder_layer=12,
-                 encoder_head=3,
-                 decoder_layer=8,
-                 decoder_head=3,
+                 emb_dim=256,
+                 encoder_layer=8,
+                 encoder_head=8,
+                 decoder_layer=4,
+                 decoder_head=8,
                  mask_ratio=0.6,
                  ) -> None:
         super().__init__()
