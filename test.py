@@ -51,6 +51,6 @@ with torch.no_grad():
     viz = denorm(viz)
 
     # store grid output
-    save_image(viz, "mae_test_recon.png", nrow=NUM_SHOW)
+    save_image(viz, "Test_results.png", nrow=NUM_SHOW)
 
 print("Saved reconstruction image as mae_test_recon.png")

@@ -39,15 +39,14 @@ class RetinaDataset(Dataset):
         return len(self.image_files)
     
     def __getitem__(self, idx):
-        fname = '{}.png'.format(idx)
-        img_path = os.path.join(self.root_image, fname)
-        mask_path = os.path.join(self.root_mask, fname)
+        img_name = self.image_files[idx]
+        mask_name = self.mask_files[idx]
+        img_path = os.path.join(self.root_image, img_name)
+        mask_path = os.path.join(self.root_mask, mask_name)
 
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = img / 255
         mask = cv2.imread(mask_path, 0)
-        mask = mask/255
 
         transformed = self.transforms(image=img, mask=mask)
         img = transformed['image']
@@ -57,5 +56,5 @@ class RetinaDataset(Dataset):
         
 
 if __name__ == '__main__':
-    ds = RetinaDataset('train')
+    ds = RetinaDataset('test')
     print(ds[1])

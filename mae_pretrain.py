@@ -16,7 +16,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--max_device_batch_size', type=int, default=5)
-    parser.add_argument('--base_learning_rate', type=float, default=1.5e-4)
+    parser.add_argument('--base_learning_rate', type=float, default=1e-5)
     parser.add_argument('--weight_decay', type=float, default=0.05)
     parser.add_argument('--mask_ratio', type=float, default=0.6)
     parser.add_argument('--total_epoch', type=int, default=500)
@@ -24,7 +24,6 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, default='bestmodel.pt')
 
     args = parser.parse_args()
-    accumulation_steps = 2 or 4
 
     setup_seed(args.seed)
 
@@ -41,9 +40,10 @@ if __name__ == '__main__':
     writer = SummaryWriter(os.path.join('logs', 'Retina Dataset', 'mae-pretrain'))
     device = torch.device('mps')
 
-    model = torch.load('bestmodel.pt',map_location=device, weights_only=False)
+    load_model = torch.load(args.model_path,map_location=device, weights_only=False)
+    model = MAE_ViT()
     model.to(device)
-    optim = torch.optim.AdamW(model.parameters(), lr=1e-5, weight_decay=0.05)
+    optim = torch.optim.AdamW(model.parameters(), lr=args.base_learning_rate, weight_decay=0.05)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.total_epoch)
 
     step_count = 0
@@ -51,18 +51,16 @@ if __name__ == '__main__':
     for e in range(args.total_epoch):
         model.train()
         losses = []
-        for img in tqdm(iter(dataloader)):
+        for k, (img,_) in enumerate(tqdm(dataloader,desc=f"Epoch {e+1}/{args.total_epoch}")):
             step_count += 1
             img = img.to(device)
-            predicted_img, mask = model(img)
             with torch.autocast(device_type='mps', dtype=torch.float16):
+                predicted_img, mask = model(img)
                 loss = torch.mean((predicted_img - img) ** 2 * mask) / args.mask_ratio
-                loss = loss / accumulation_steps
-                loss.backward()
-                if (e+1) % accumulation_steps == 0:
-                    optim.step()
-                    optim.zero_grad()
-                losses.append(loss.item())
+            loss.backward()
+            optim.step()
+            optim.zero_grad()
+            losses.append(loss.item())
         lr_scheduler.step()
         avg_loss = sum(losses) / len(losses)
         writer.add_scalar('mae_loss', avg_loss, global_step=e)
@@ -71,7 +69,7 @@ if __name__ == '__main__':
         ''' visualize the first 16 predicted images on val dataset'''
         model.eval()
         with torch.no_grad():
-            val_img = torch.stack([val_dataset[i] for i in range(16)])
+            val_img = torch.stack([val_dataset[i][0] for i in range(16)])
             val_img = val_img.to(device)
             predicted_val_img, mask = model(val_img)
             predicted_val_img = predicted_val_img * mask + val_img * (1 - mask)
