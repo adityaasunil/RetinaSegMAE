@@ -14,35 +14,48 @@ class RetinaDataset(Dataset):
         self.split = split 
 
         self.training_images = os.path.join(PROJECT_ROOT, 'images', 'train')
+        self.training_mask_images = os.path.join(PROJECT_ROOT, 'images', 'train_mask')
         self.testing_images = os.path.join(PROJECT_ROOT, 'images', 'test')
+        self.testing_mask_images = os.path.join(PROJECT_ROOT, 'images', 'test_mask')
 
         if split == "train":
-            self.root = os.path.join(PROJECT_ROOT, "images", "train")
+            self.root_image = self.training_images
+            self.root_mask = self.training_mask_images
         else:
-            self.root = os.path.join(PROJECT_ROOT, "images", "test")
+            self.root_mask = self.testing_mask_images
+            self.root_image = self.testing_images
 
         # Take all png files and sort them
-        self.files = sorted(
-            [f for f in os.listdir(self.root) if f.lower().endswith(".png")]
+        self.image_files = sorted(
+            [f for f in os.listdir(self.root_image) if f.lower().endswith(".png")]
+        )
+        self.mask_files = sorted(
+            [f for f in os.listdir(self.root_mask) if f.lower().endswith('.png')]
         )
 
         self.transforms = get_transforms(split)
 
     def __len__(self):
-        return len(self.files)
+        return len(self.image_files)
     
     def __getitem__(self, idx):
-        fname = self.files[idx]
-        img_path = os.path.join(self.root, fname)
+        fname = '{}.png'.format(idx)
+        img_path = os.path.join(self.root_image, fname)
+        mask_path = os.path.join(self.root_mask, fname)
 
         img = cv2.imread(img_path)
-        if img is None:
-            raise FileNotFoundError(f"cv2.imread failed for path: {img_path}")
-
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = img / 255
+        mask = cv2.imread(mask_path, 0)
+        mask = mask/255
 
-        if self.transforms is not None:
-            transformed = self.transforms(image=img)
-            img = transformed["image"]
+        transformed = self.transforms(image=img, mask=mask)
+        img = transformed['image']
+        mask = transformed['mask']
 
-        return img
+        return img, mask
+        
+
+if __name__ == '__main__':
+    ds = RetinaDataset('train')
+    print(ds[1])
