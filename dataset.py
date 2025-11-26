@@ -3,6 +3,7 @@ import numpy as np
 from torch.utils.data.dataset import Dataset
 import os,sys
 import cv2
+import torch
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
 
@@ -13,10 +14,10 @@ class RetinaDataset(Dataset):
     def __init__(self, split):
         self.split = split 
 
-        self.training_images = os.path.join(PROJECT_ROOT, 'images', 'train')
-        self.training_mask_images = os.path.join(PROJECT_ROOT, 'images', 'train_mask')
-        self.testing_images = os.path.join(PROJECT_ROOT, 'images', 'test')
-        self.testing_mask_images = os.path.join(PROJECT_ROOT, 'images', 'test_mask')
+        self.training_images = os.path.join(PROJECT_ROOT, 'images', 'train/image')
+        self.training_mask_images = os.path.join(PROJECT_ROOT, 'images', 'train/mask')
+        self.testing_images = os.path.join(PROJECT_ROOT, 'images', 'test/image')
+        self.testing_mask_images = os.path.join(PROJECT_ROOT, 'images', 'test/mask')
 
         if split == "train":
             self.root_image = self.training_images
@@ -36,7 +37,7 @@ class RetinaDataset(Dataset):
         self.transforms = get_transforms(split)
 
     def __len__(self):
-        return len(self.image_files)
+        return min(len(self.image_files), len(self.mask_files))
     
     def __getitem__(self, idx):
         img_name = self.image_files[idx]
@@ -47,14 +48,16 @@ class RetinaDataset(Dataset):
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         mask = cv2.imread(mask_path, 0)
+        mask = cv2.resize(mask, (384,384), interpolation=cv2.INTER_NEAREST)
+        mask = mask/255.0
+        mask = torch.tensor(mask).unsqueeze(0)
 
-        transformed = self.transforms(image=img, mask=mask)
+        transformed = self.transforms(image=img)
         img = transformed['image']
-        mask = transformed['mask']
 
         return img, mask
         
 
 if __name__ == '__main__':
     ds = RetinaDataset('test')
-    print(ds[1])
+    print(ds[19])

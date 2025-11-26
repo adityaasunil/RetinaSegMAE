@@ -19,7 +19,7 @@ if __name__ == '__main__':
     parser.add_argument('--base_learning_rate', type=float, default=1e-5)
     parser.add_argument('--weight_decay', type=float, default=0.05)
     parser.add_argument('--mask_ratio', type=float, default=0.6)
-    parser.add_argument('--total_epoch', type=int, default=500)
+    parser.add_argument('--total_epoch', type=int, default=3000)
     parser.add_argument('--warmup_epoch', type=int, default=200)
     parser.add_argument('--model_path', type=str, default='bestmodel.pt')
 
@@ -40,8 +40,7 @@ if __name__ == '__main__':
     writer = SummaryWriter(os.path.join('logs', 'Retina Dataset', 'mae-pretrain'))
     device = torch.device('mps')
 
-    load_model = torch.load(args.model_path,map_location=device, weights_only=False)
-    model = MAE_ViT()
+    model = torch.load(args.model_path,map_location=device,weights_only=False)
     model.to(device)
     optim = torch.optim.AdamW(model.parameters(), lr=args.base_learning_rate, weight_decay=0.05)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.total_epoch)
@@ -64,7 +63,7 @@ if __name__ == '__main__':
         lr_scheduler.step()
         avg_loss = sum(losses) / len(losses)
         writer.add_scalar('mae_loss', avg_loss, global_step=e)
-        print(f'In epoch {e}, average traning loss is {avg_loss}.')
+        print(f'In epoch {e+1}, average traning loss is {avg_loss}.')
 
         ''' visualize the first 16 predicted images on val dataset'''
         model.eval()
