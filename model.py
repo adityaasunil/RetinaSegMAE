@@ -158,19 +158,30 @@ class MAE_ViT(torch.nn.Module):
 # making the conv block
 
 class ConvBlock(torch.nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels,num_groups: int = 8):
         super().__init__()
-        self.block = torch.nn.Sequential(
-            torch.nn.Conv2d(in_channels,out_channels,kernel_size=3,padding=1),
-            torch.nn.BatchNorm2d(out_channels),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Conv2d(out_channels,out_channels,kernel_size=3,padding=1),
-            torch.nn.BatchNorm2d(out_channels),
-            torch.nn.ReLU(inplace=True)
-        )
+        self.conv1 = torch.nn.Conv2d(in_channels,out_channels,kernel_size=3,padding=1)
+        self.gn1 = torch.nn.GroupNorm(num_groups=min(num_groups, out_channels), num_channels=out_channels)
+        self.conv2 = torch.nn.Conv2d(out_channels,out_channels,kernel_size=3,padding=1)
+        self.gn2 = torch.nn.GroupNorm(num_groups=min(num_groups,out_channels), num_channels=out_channels)
+
+        self.res_conv = None 
+        if in_channels != out_channels:
+            self.res_conv = torch.nn.Conv2d(in_channels,out_channels,kernel_size=1)
+        
     
     def forward(self, x):
-        return self.block(x)
+        indentity = x
+        out = self.conv1(x)
+        out = self.gn1(out)
+        out = torch.nn.functional.relu(out, inplace=True)
+        out = self.conv2(out)
+        out = self.gn2(out)
+        if self.res_conv is not None:
+            identity = self.res_conv(identity)
+        out = out + identity
+        out = torch.nn.functional.relu(out, inplace=True)
+        return out
 
 
 class MAESegmenation(torch.nn.Module):
@@ -184,15 +195,17 @@ class MAESegmenation(torch.nn.Module):
         for p in self.encoder.parameters():
             p.requires_grad = False 
 
+        self.context = ConvBlock(embed_dim,embed_dim)
+
         self.dec1 = ConvBlock(embed_dim,256) # 24x24, 384 -> 256
         self.up1 = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) # 24x24->48x48
-        self.dc2 = ConvBlock(256,128) # 48x48 , 256 -> 128
+        self.dc2 = ConvBlock(256,192) # 48x48 , 256 -> 128
         self.up2 = torch.nn.Upsample(scale_factor=2,mode='bilinear',align_corners=False) # 96x96
-        self.dc3 = ConvBlock(128,64) # 96x96, 128 -> 64
+        self.dc3 = ConvBlock(192,128) # 96x96, 128 -> 64
         self.up3 = torch.nn.Upsample(scale_factor=2,mode='bilinear',align_corners=False) # 192x192
-        self.dc4 = ConvBlock(64,32) # 192x 192, 64->32
+        self.dc4 = ConvBlock(128,64) # 192x 192, 64->32
         self.up4 = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) # 192 -> 384
-        self.dc5 = ConvBlock(32,16)
+        self.dc5 = ConvBlock(64,32)
         self.finalConv = torch.nn.Conv2d(16, 1, kernel_size=1)
 
     def forward(self, img):
@@ -206,7 +219,8 @@ class MAESegmenation(torch.nn.Module):
 
         tokens = tokens.permute(1,0,2).contiguous() # (B,T,C)
         tokens = tokens.view(B,H,W,C) # (B,24,24,C)
-        feat_map = tokens.permute(0,3,1,2).contiguous() # (B,C,H,W)
+        feat_map = tokens.permute(0,3,1,2).contiguous()
+        feat_map = self.context(feat_map) # (B,C,H,W)
 
         x = self.dec1(feat_map)
         x = self.up1(x)
