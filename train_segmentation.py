@@ -76,6 +76,7 @@ if __name__ == '__main__':
     for epoch in range(args.max_epochs):
         seg_model.train()
         running_loss = 0.0
+        running_dice_loss = 0.0
         losses=[]
         for i,(img,mask) in enumerate(tqdm(training_dataloader, desc='Epoch {}/{}'.format(epoch+1,args.max_epochs))):
             imgs = img.to(device)
@@ -97,8 +98,9 @@ if __name__ == '__main__':
             optim.step()
 
             losses.append(loss.item())
-            running_loss += loss.item() 
-        print(f"Epoch {epoch+1} , avg loss={running_loss/len(training_dataloader):.6f}")
+            running_loss += loss.item()
+            running_dice_loss += dl.item() 
+        print(f"Epoch {epoch+1} , avg loss={running_loss/len(training_dataloader):.6f}, avg dice loss={running_dice_loss/len(training_dataloader):.4f}")
 
         avg_loss = running_loss/len(training_dataloader)
         if avg_loss < best_loss:
