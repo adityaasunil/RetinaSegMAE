@@ -72,12 +72,6 @@ class RetinaDataset(Dataset):
         vessel_map = vessel_sharp - vessel_sharp.min()
         vessel_map = vessel_map / vessel_map.max()
 
-
-        vessel_map_resized = cv2.resize(vessel_map, (384,384), interpolation=cv2.INTER_AREA)
-        print(vessel_map_resized.min(), vessel_map_resized.max(), vessel_map_resized.mean())    
-        vessel_tensor = torch.tensor(vessel_map_resized, dtype=torch.float32).unsqueeze(0)
-
-
         mask = cv2.imread(mask_path, 0)
         mask = cv2.resize(mask, (384,384), interpolation=cv2.INTER_NEAREST)
         mask = mask/255.0
@@ -89,22 +83,26 @@ class RetinaDataset(Dataset):
         elif mask.dim() == 3 and mask.shape[0] > 1:
             mask = mask[0].unsqueeze(0)
 
-
-        transformed = self.transforms(image=img)
+        transformed = self.transforms(image=img, mask=vessel_map)
         img = transformed['image']
-        combined = torch.cat([img, vessel_tensor], dim=0)
+        vessel_mask = transformed['mask']
+
+        if vessel_mask.ndim == 2:
+            vessel_mask = vessel_mask.unsqueeze(0)
+
+        combined = torch.cat([img, vessel_mask], dim=0)
 
         return combined, mask
         
 
 if __name__ == '__main__':
     ds = RetinaDataset('test')
-    i,m,v = ds[19]
-    plt.figure(figsize=(10,4))
-    plt.subplot(1,2,1)
-    plt.title('original image')
-    plt.imshow(i, cmap='grey')
-    plt.subplot(1,2,2)
-    plt.title('Vessel map')
-    plt.imshow(v, cmap='grey')
+    i,m = ds[19]
+    rgb = i[:3].permute(1,2,0).numpy()
+    rgb = rgb * 0.5 + 0.5
+    vessel = i[3].numpy()
+
+    plt.subplot(1,3,1);plt.title('RGB');plt.imshow(rgb);plt.axis('off')
+    plt.subplot(1,3,2);plt.title('Vessel mask');plt.imshow(vessel, cmap='gray');plt.axis('off')
+    plt.subplot(1,3,3);plt.title('Ground truth mask');plt.imshow(m.squeeze().numpy(), cmap='gray');plt.axis('off')
     plt.show()
