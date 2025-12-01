@@ -206,7 +206,7 @@ class MAESegmenation(torch.nn.Module):
         self.dc4 = ConvBlock(128,64) # 192x 192, 64->32
         self.up4 = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) # 192 -> 384
         self.dc5 = ConvBlock(64,32)
-        self.finalConv = torch.nn.Conv2d(16, 1, kernel_size=1)
+        self.finalConv = torch.nn.Conv2d(32, 1, kernel_size=1)
 
     def forward(self, img):
 
