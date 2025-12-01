@@ -3,7 +3,9 @@ import numpy as np
 from torch.utils.data.dataset import Dataset
 import os,sys
 import cv2
+import matplotlib.pyplot as plt
 import torch
+from scipy.signal import wiener
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
 
@@ -47,6 +49,35 @@ class RetinaDataset(Dataset):
 
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        green_img = img[:,:,1]
+
+        filtered_green_img = wiener(green_img.astype(np.float32), (5,5))
+        filtered_norm = cv2.normalize(filtered_green_img, None, 0, 255, cv2.NORM_MINMAX)
+        filtered_normu8 = filtered_norm.astype(np.uint8)
+
+        clahe = cv2.createCLAHE(clipLimit=2.0,tileGridSize=(8,8))
+        enhanced = clahe.apply(filtered_normu8)
+
+        enhanced_f = enhanced.astype(np.float32) / 255
+
+        blurred = cv2.GaussianBlur(enhanced_f, (15,15), 0)
+        
+        a = 0.3
+
+        vessel_like = enhanced_f - (a*blurred)
+        vessel_like = np.clip(vessel_like, 0, None)
+        vessel_sharp = 1 / (1 + np.exp(-10*(vessel_like - 0.5)))
+
+        vessel_map = vessel_sharp - vessel_sharp.min()
+        vessel_map = vessel_map / vessel_map.max()
+
+
+        vessel_map_resized = cv2.resize(vessel_map, (384,384), interpolation=cv2.INTER_AREA)
+        print(vessel_map_resized.min(), vessel_map_resized.max(), vessel_map_resized.mean())    
+        vessel_tensor = torch.tensor(vessel_map_resized, dtype=torch.float32).unsqueeze(0)
+
+
         mask = cv2.imread(mask_path, 0)
         mask = cv2.resize(mask, (384,384), interpolation=cv2.INTER_NEAREST)
         mask = mask/255.0
@@ -61,10 +92,19 @@ class RetinaDataset(Dataset):
 
         transformed = self.transforms(image=img)
         img = transformed['image']
+        combined = torch.cat([img, vessel_tensor], dim=0)
 
-        return img, mask
+        return combined, mask
         
 
 if __name__ == '__main__':
     ds = RetinaDataset('test')
-    print(ds[19])
+    i,m,v = ds[19]
+    plt.figure(figsize=(10,4))
+    plt.subplot(1,2,1)
+    plt.title('original image')
+    plt.imshow(i, cmap='grey')
+    plt.subplot(1,2,2)
+    plt.title('Vessel map')
+    plt.imshow(v, cmap='grey')
+    plt.show()
