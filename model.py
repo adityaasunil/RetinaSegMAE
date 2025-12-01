@@ -171,7 +171,7 @@ class ConvBlock(torch.nn.Module):
         
     
     def forward(self, x):
-        indentity = x
+        identity = x
         out = self.conv1(x)
         out = self.gn1(out)
         out = torch.nn.functional.relu(out, inplace=True)
