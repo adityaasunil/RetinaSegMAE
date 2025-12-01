@@ -12,13 +12,14 @@ import torch
 import torch.nn as n
 import torch.nn.functional as f 
 from torchvision.utils import save_image
+from model import *
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed',type=int,default=42)
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--patch_size',type=int,default=16)
-    parser.add_argument('--base_learning_rate',type=float,default=1e-5)
+    parser.add_argument('--base_learning_rate',type=float,default=1e-4)
     parser.add_argument('--max_epochs',type=int,default=300)
     parser.add_argument('--model_path',type=str,default='bestmodel.pt')
 
@@ -40,11 +41,6 @@ if __name__ == '__main__':
     for p in model.encoder.parameters():
         p.requires_grad = False
 
-    # Changing the decoder head
-    patch_size = args.patch_size
-    decoder_dim = model.decoder.head.in_features
-
-    model.decoder.head = n.Linear(decoder_dim, patch_size * patch_size * 1).to(device) # Gives single channel patch grid
         
     def dice_loss(pred,truth,eps=1e-6):
         i=(pred*truth).sum(dim=(2,3))
@@ -53,43 +49,48 @@ if __name__ == '__main__':
         return 1 - dice.mean()
     
     def dice_score(pred,truth,eps=1e-6):
-        pred_bin = (pred>0.5).float()
-        i = (pred_bin*truth).sum(dim=(2,3))
-        u = pred_bin.sum(dim=(2,3)) + truth.sum(dim=(2,3))
+        i = (pred*truth).sum(dim=(2,3))
+        u = pred.sum(dim=(2,3)) + truth.sum(dim=(2,3))
         dice = (2 * i + eps) / (u + eps)
         return dice.mean().item()
     
     def iou_score(pred,target,eps=1e-6):
-        pred_bin = (pred>0.5).float()
-        i = (pred_bin*target).sum(dim=(2,3))
-        u = pred_bin.sum(dim=(2,3)) + target.sum(dim=(2,3))
+        i = (pred*target).sum(dim=(2,3))
+        u = pred.sum(dim=(2,3)) + target.sum(dim=(2,3))
         iou = (i + eps) / (u + eps)
         return iou.mean().item()
 
     # Training Loop
 
-    criterion = n.BCEWithLogitsLoss()
-    optim = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],lr=args.base_learning_rate)
+    seg_model = MAESegmenation(model)
+    seg_model.to(device)
+
+    pos_weight = torch.tensor([5.0], device=device)
+    criterion = n.BCEWithLogitsLoss(pos_weight=pos_weight)
+    optim = torch.optim.AdamW([p for p in seg_model.parameters() if p.requires_grad],lr=args.base_learning_rate)
     scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=50, gamma=0.1)
 
     best_loss = float('inf')
     best_model_path = 'segmentation_best.pt'
 
     for epoch in range(args.max_epochs):
-        model.train()
+        seg_model.train()
         running_loss = 0.0
         losses=[]
         for i,(img,mask) in enumerate(tqdm(training_dataloader, desc='Epoch {}/{}'.format(epoch+1,args.max_epochs))):
             imgs = img.to(device)
-            masks = (mask>0).unsqueeze(1).float().to(device)
+            masks = (mask>0).float()
+            if masks.ndim == 3:
+                masks = masks.unsqueeze(1)
+            masks = masks.to(device)
 
-            logits, _ = model(imgs)
+            logits = seg_model(imgs)
             bce = criterion(logits,masks)
 
             probs = torch.sigmoid(logits)
             dl = dice_loss(probs,masks)
 
-            loss = 0.5 * bce + 0.5 * dl 
+            loss = 0.3 * bce + 0.7 * dl 
             
             optim.zero_grad()
             loss.backward()
@@ -102,26 +103,33 @@ if __name__ == '__main__':
         avg_loss = running_loss/len(training_dataloader)
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(model.state_dict(), best_model_path)
+            torch.save(seg_model.state_dict(), best_model_path)
             print(f"> New best model saved at epoch {epoch+1} with loss {best_loss:.6f}")
 
         scheduler.step()
 
+
     with torch.no_grad():
         state_dict = torch.load(best_model_path,map_location=device)
-        model.load_state_dict(state_dict)
-        model.to(device)
-        model.eval()
+        seg_model.load_state_dict(state_dict=state_dict)
+        seg_model.to(device)
+        seg_model.eval()
+
         os.makedirs('segmentation_vis',exist_ok=True)
         dices = []
         ious = []
         for i, (img,mask) in enumerate(test_dataloader):
             imgs = img.to(device)
-            masks = (mask>0.5).unsqueeze(1).float().to(device)
+            masks = (mask>0).float().to(device)
 
-            logits, _ = model(imgs)
+            logits = seg_model(imgs)
 
             probs = torch.sigmoid(logits)
+
+            print(
+            f"Batch {i} probs stats -> min: {probs.min().item():.4f}, "
+            f"max: {probs.max().item():.4f}, mean: {probs.mean().item():.4f}"
+            )
 
                         # Visualize first few test samples
             if i < 5:
@@ -129,7 +137,7 @@ if __name__ == '__main__':
                 img_vis = imgs[0].detach().cpu()
                 gt_mask = masks[0].detach().cpu()
                 pred_prob = probs[0].detach().cpu()
-                pred_bin = (pred_prob > 0.5).float()
+                pred_bin = (pred_prob > 0.15).float()
 
                 # Unnormalize image from [-1,1] to [0,1] if using mean=0.5,std=0.5
                 img_vis = (img_vis * 0.5 + 0.5).clamp(0, 1)
@@ -151,5 +159,7 @@ if __name__ == '__main__':
 
         mean_dice = sum(dices)/len(dices)
         mean_ious = sum(ious)/len(ious)
+
+        print("Logits stats -> min:", logits.min().item(), "max:", logits.max().item())
 
         print(f"[BEST] Test Dice: {mean_dice:.4f}, Test IoU: {mean_ious:.4f}")

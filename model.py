@@ -25,7 +25,8 @@ class PatchShuffle(torch.nn.Module):
         T, B, C = patches.shape
         remain_T = int(T * (1 - self.ratio))
 
-        forward_indexes, backward_indexes = random_indexes(T,B,torch.device('mps'))
+        device = patches.device
+        forward_indexes, backward_indexes = random_indexes(T,B,device)
 
         patches = take_indexes(patches, forward_indexes)
         patches = patches[:remain_T]
@@ -36,7 +37,7 @@ class MAE_Encoder(torch.nn.Module):
     def __init__(self,
                  image_size=384,
                  patch_size=16,
-                 emb_dim=256,
+                 emb_dim=384,
                  num_layer=8,
                  num_head=8,
                  mask_ratio=0.6,
@@ -73,11 +74,26 @@ class MAE_Encoder(torch.nn.Module):
 
         return features, backward_indexes
 
+    def forward_all_tokens(self,img):
+        patches = self.patchify(img)                           # (B, C, H', W')
+        patches = rearrange(patches, 'b c h w -> (h w) b c')    # (T_FULL, B, C)
+        patches = patches + self.pos_embedding                  # full pos emb
+
+        patches = torch.cat(
+           [self.cls_token.expand(-1, patches.shape[1], -1), patches],
+           dim=0
+        )
+
+        patches = rearrange(patches, 't b c -> b t c')
+        features = self.layer_norm(self.transformer(patches))
+        features = rearrange(features, 'b t c -> t b c')
+        return features
+
 class MAE_Decoder(torch.nn.Module):
     def __init__(self,
                  image_size=384,
                  patch_size=16,
-                 emb_dim=256,
+                 emb_dim=384,
                  num_layer=4,
                  num_head=8,
                  ) -> None:
@@ -122,7 +138,7 @@ class MAE_ViT(torch.nn.Module):
     def __init__(self,
                  image_size=384,
                  patch_size=16,
-                 emb_dim=256,
+                 emb_dim=384,
                  encoder_layer=8,
                  encoder_head=8,
                  decoder_layer=4,
@@ -139,6 +155,74 @@ class MAE_ViT(torch.nn.Module):
         predicted_img, mask = self.decoder(features,  backward_indexes)
         return predicted_img, mask
 
+# making the conv block
+
+class ConvBlock(torch.nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.block = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels,out_channels,kernel_size=3,padding=1),
+            torch.nn.BatchNorm2d(out_channels),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Conv2d(out_channels,out_channels,kernel_size=3,padding=1),
+            torch.nn.BatchNorm2d(out_channels),
+            torch.nn.ReLU(inplace=True)
+        )
+    
+    def forward(self, x):
+        return self.block(x)
+
+
+class MAESegmenation(torch.nn.Module):
+    def __init__(self,
+                 mae_model,
+                 embed_dim=384):
+        super().__init__()
+
+        self.encoder = mae_model.encoder
+
+        for p in self.encoder.parameters():
+            p.requires_grad = False 
+
+        self.dec1 = ConvBlock(embed_dim,256) # 24x24, 384 -> 256
+        self.up1 = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) # 24x24->48x48
+        self.dc2 = ConvBlock(256,128) # 48x48 , 256 -> 128
+        self.up2 = torch.nn.Upsample(scale_factor=2,mode='bilinear',align_corners=False) # 96x96
+        self.dc3 = ConvBlock(128,64) # 96x96, 128 -> 64
+        self.up3 = torch.nn.Upsample(scale_factor=2,mode='bilinear',align_corners=False) # 192x192
+        self.dc4 = ConvBlock(64,32) # 192x 192, 64->32
+        self.up4 = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) # 192 -> 384
+        self.dc5 = ConvBlock(32,16)
+        self.finalConv = torch.nn.Conv2d(16, 1, kernel_size=1)
+
+    def forward(self, img):
+
+        features = self.encoder.forward_all_tokens(img)
+        _,B,C = features.shape
+        tokens = features[1:] # (576, B, C)
+
+        T_full = tokens.shape[0]
+        H=W= int(T_full ** 0.5)
+
+        tokens = tokens.permute(1,0,2).contiguous() # (B,T,C)
+        tokens = tokens.view(B,H,W,C) # (B,24,24,C)
+        feat_map = tokens.permute(0,3,1,2).contiguous() # (B,C,H,W)
+
+        x = self.dec1(feat_map)
+        x = self.up1(x)
+
+        x = self.dc2(x)
+        x = self.up2(x)
+
+        x = self.dc3(x)
+        x = self.up3(x)
+
+        x = self.dc4(x)
+        x = self.up4(x)
+
+        x = self.dc5(x)
+        logits = self.finalConv(x)
+        return logits
 
 
 if __name__ == '__main__':
@@ -147,7 +231,7 @@ if __name__ == '__main__':
     b, forward_indexes, backward_indexes = shuffle(a)
     print(b.shape)
 
-    img = torch.rand(2, 3, 32, 32)
+    img = torch.rand(2, 3, 384, 384)
     encoder = MAE_Encoder()
     decoder = MAE_Decoder()
     features, backward_indexes = encoder(img)
@@ -155,4 +239,9 @@ if __name__ == '__main__':
     predicted_img, mask = decoder(features, backward_indexes)
     print(predicted_img.shape)
     loss = torch.mean((predicted_img - img) ** 2 * mask / 0.75)
-    print(loss)
+    print(loss.item())
+
+    vit_model = MAE_ViT()
+    model = MAESegmenation(vit_model)
+    logits = model(predicted_img)
+    print(logits.shape)

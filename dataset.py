@@ -50,7 +50,14 @@ class RetinaDataset(Dataset):
         mask = cv2.imread(mask_path, 0)
         mask = cv2.resize(mask, (384,384), interpolation=cv2.INTER_NEAREST)
         mask = mask/255.0
-        mask = torch.tensor(mask).unsqueeze(0)
+        mask = torch.tensor(mask)
+        if mask.dim() == 2:
+            mask = mask.unsqueeze(0)
+        elif mask.dim() ==3 and mask.shape[0] == 1:
+            pass 
+        elif mask.dim() == 3 and mask.shape[0] > 1:
+            mask = mask[0].unsqueeze(0)
+
 
         transformed = self.transforms(image=img)
         img = transformed['image']
