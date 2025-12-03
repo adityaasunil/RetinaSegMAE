@@ -36,7 +36,7 @@ class RetinaDataset(Dataset):
             [f for f in os.listdir(self.root_mask) if f.lower().endswith('.png')]
         )
 
-        self.transforms = get_transforms(split)
+        self.transforms = get_transforms()
 
     def __len__(self):
         return min(len(self.image_files), len(self.mask_files))

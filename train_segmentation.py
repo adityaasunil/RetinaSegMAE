@@ -19,7 +19,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed',type=int,default=42)
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--patch_size',type=int,default=16)
-    parser.add_argument('--base_learning_rate',type=float,default=1e-4)
+    parser.add_argument('--base_learning_rate',type=float,default=3e-4)
     parser.add_argument('--max_epochs',type=int,default=300)
     parser.add_argument('--model_path',type=str,default='bestmodel.pt')
 
@@ -56,7 +56,7 @@ if __name__ == '__main__':
     
     def iou_score(pred,target,eps=1e-6):
         i = (pred*target).sum(dim=(2,3))
-        u = pred.sum(dim=(2,3)) + target.sum(dim=(2,3))
+        u = pred.sum(dim=(2,3)) + target.sum(dim=(2,3)) - i
         iou = (i + eps) / (u + eps)
         return iou.mean().item()
 
@@ -65,7 +65,7 @@ if __name__ == '__main__':
     seg_model = MAESegmenation(model)
     seg_model.to(device)
 
-    pos_weight = torch.tensor([5.0], device=device)
+    pos_weight = torch.tensor([2.0], device=device)
     criterion = n.BCEWithLogitsLoss(pos_weight=pos_weight)
     optim = torch.optim.AdamW([p for p in seg_model.parameters() if p.requires_grad],lr=args.base_learning_rate)
     scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=50, gamma=0.1)
@@ -91,7 +91,7 @@ if __name__ == '__main__':
             probs = torch.sigmoid(logits)
             dl = dice_loss(probs,masks)
 
-            loss = 0.3 * bce + 0.7 * dl 
+            loss = 0.5 * bce + 0.5 * dl
             
             optim.zero_grad()
             loss.backward()
@@ -110,6 +110,9 @@ if __name__ == '__main__':
 
         scheduler.step()
 
+
+    if not os.path.exists(best_model_path):
+        raise FileNotFoundError(f"{best_model_path} not found. Train and save the model first.")
 
     with torch.no_grad():
         state_dict = torch.load(best_model_path,map_location=device)
@@ -137,6 +140,7 @@ if __name__ == '__main__':
             if i < 5:
                 # Take first item in batch
                 img_vis = imgs[0].detach().cpu()
+                img_vis = img_vis[:3]
                 gt_mask = masks[0].detach().cpu()
                 pred_prob = probs[0].detach().cpu()
                 pred_bin = (pred_prob > 0.15).float()

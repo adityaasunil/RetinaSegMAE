@@ -28,7 +28,7 @@ print("Loading dataset...")
 dataset = RetinaDataset(SPLIT)
 indices = list(range(min(NUM_SHOW, len(dataset))))   # get first few samples
 
-imgs = torch.stack([dataset[i][0] for i in indices]).to(DEVICE)
+imgs = torch.stack([dataset[i][0][:3, :, :] for i in indices]).to(DEVICE)
 
 print("Running inference...")
 with torch.no_grad():

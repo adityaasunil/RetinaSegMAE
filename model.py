@@ -50,7 +50,7 @@ class MAE_Encoder(torch.nn.Module):
 
         self.patchify = torch.nn.Conv2d(3, emb_dim, patch_size, patch_size)
 
-        self.transformer = torch.nn.Sequential(*[Block(emb_dim, num_head) for _ in range(num_layer)])
+        self.transformer = torch.nn.ModuleList([Block(emb_dim, num_head) for _ in range(num_layer)])
 
         self.layer_norm = torch.nn.LayerNorm(emb_dim)
 
@@ -69,7 +69,9 @@ class MAE_Encoder(torch.nn.Module):
 
         patches = torch.cat([self.cls_token.expand(-1, patches.shape[1], -1), patches], dim=0)
         patches = rearrange(patches, 't b c -> b t c')
-        features = self.layer_norm(self.transformer(patches))
+        for blk in self.transformer:
+            patches = blk(patches)
+        features = self.layer_norm(patches)
         features = rearrange(features, 'b t c -> t b c')
 
         return features, backward_indexes
@@ -85,7 +87,9 @@ class MAE_Encoder(torch.nn.Module):
         )
 
         patches = rearrange(patches, 't b c -> b t c')
-        features = self.layer_norm(self.transformer(patches))
+        for blk in self.transformer:
+            patches = blk(patches)
+        features = self.layer_norm(patches)
         features = rearrange(features, 'b t c -> t b c')
         return features
 
@@ -164,6 +168,7 @@ class ConvBlock(torch.nn.Module):
         self.gn1 = torch.nn.GroupNorm(num_groups=min(num_groups, out_channels), num_channels=out_channels)
         self.conv2 = torch.nn.Conv2d(out_channels,out_channels,kernel_size=3,padding=1)
         self.gn2 = torch.nn.GroupNorm(num_groups=min(num_groups,out_channels), num_channels=out_channels)
+        self.dropout = torch.nn.Dropout2d(p=0.1)
 
         self.res_conv = None 
         if in_channels != out_channels:
@@ -177,6 +182,8 @@ class ConvBlock(torch.nn.Module):
         out = torch.nn.functional.relu(out, inplace=True)
         out = self.conv2(out)
         out = self.gn2(out)
+        
+        out = self.dropout(out)
         if self.res_conv is not None:
             identity = self.res_conv(identity)
         out = out + identity
@@ -192,25 +199,43 @@ class MAESegmenation(torch.nn.Module):
 
         self.encoder = mae_model.encoder
 
-        for p in self.encoder.parameters():
+        self.input_adapter = torch.nn.Conv2d(4,3,kernel_size=1)
+
+        for name, p in self.encoder.named_parameters():
             p.requires_grad = False 
 
-        self.context = ConvBlock(embed_dim,embed_dim)
+        if isinstance(self.encoder.transformer, torch.nn.ModuleList) and len(self.encoder.transformer) >=2 :
+            for blk in self.encoder.transformer[-2:]:
+                for p in blk.parameters():
+                    p.requires_grad = True
+        for p in self.encoder.layer_norm.parameters():
+            p.requires_grad = True
 
-        self.dec1 = ConvBlock(embed_dim,256) # 24x24, 384 -> 256
+
+        self.context = ConvBlock(embed_dim,embed_dim)
+        
+        self.dec1 = ConvBlock(embed_dim+1,256) # 24x24, 384 -> 256
         self.up1 = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) # 24x24->48x48
-        self.dc2 = ConvBlock(256,192) # 48x48 , 256 -> 128
+        self.dc2 = ConvBlock(256,128) # 48x48 , 256 -> 128
         self.up2 = torch.nn.Upsample(scale_factor=2,mode='bilinear',align_corners=False) # 96x96
-        self.dc3 = ConvBlock(192,128) # 96x96, 128 -> 64
+        self.dc3 = ConvBlock(128,64) # 96x96, 128 -> 64
         self.up3 = torch.nn.Upsample(scale_factor=2,mode='bilinear',align_corners=False) # 192x192
-        self.dc4 = ConvBlock(128,64) # 192x 192, 64->32
+        self.dc4 = ConvBlock(64,32) # 192x 192, 64->32
         self.up4 = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) # 192 -> 384
-        self.dc5 = ConvBlock(64,32)
-        self.finalConv = torch.nn.Conv2d(32, 1, kernel_size=1)
+        self.dc5 = ConvBlock(32,16)
+        self.finalConv = torch.nn.Conv2d(16, 1, kernel_size=1)
+
+        if self.finalConv.bias is not None:
+            self.finalConv.bias.data.fill_(-2.0)
 
     def forward(self, img):
 
-        features = self.encoder.forward_all_tokens(img)
+        rgb = img[:, :3, :, :]
+        v = img[:, 3:4, :, :]
+
+        fused_for_encoder = self.input_adapter(img)
+
+        features = self.encoder.forward_all_tokens(fused_for_encoder)
         _,B,C = features.shape
         tokens = features[1:] # (576, B, C)
 
@@ -221,6 +246,9 @@ class MAESegmenation(torch.nn.Module):
         tokens = tokens.view(B,H,W,C) # (B,24,24,C)
         feat_map = tokens.permute(0,3,1,2).contiguous()
         feat_map = self.context(feat_map) # (B,C,H,W)
+
+        v_down = torch.nn.functional.interpolate(v, size=feat_map.shape[-2:], mode='bilinear', align_corners=False)
+        feat_map = torch.cat([feat_map, v_down], dim=1)
 
         x = self.dec1(feat_map)
         x = self.up1(x)
@@ -257,5 +285,6 @@ if __name__ == '__main__':
 
     vit_model = MAE_ViT()
     model = MAESegmenation(vit_model)
-    logits = model(predicted_img)
+    seg_input = torch.rand(2,4,384,384)
+    logits = model(seg_input)
     print(logits.shape)
