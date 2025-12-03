@@ -121,7 +121,7 @@ if __name__ == '__main__':
             val_recon_error = (blended_pred - val_rgb) ** 2
             val_loss = torch.mean(val_recon_error * mask * weight) / args.mask_ratio
             print('Validation loss: {:.4f}'.format(val_loss))
-            img = torch.cat([val_img * (1 - mask), predicted_val_img, val_img], dim=0)
+            img = torch.cat([val_rgb * (1 - mask), predicted_val_img, val_rgb], dim=0)
             img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=2, v=3)
             writer.add_image('mae_image', (img + 1) / 2, global_step=e)
         
