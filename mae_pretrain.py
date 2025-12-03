@@ -105,7 +105,7 @@ if __name__ == '__main__':
                 val_vessel = None
                 val_rgb = val_img 
 
-            predicted_val_img, mask = model(val_img)
+            predicted_val_img, mask = model(val_rgb)
             blended_pred = predicted_val_img * mask + val_rgb * (1 - mask)
 
             if val_vessel is not None:
